@@ -1,0 +1,36 @@
+name: iPhone Arbitraj 999.md
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/iphone-arb/**'
+      - '.github/workflows/iphone-arb.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'   # la fiecare 6h (ruleaza de pe branch-ul default: main)
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PAGES: '8'
+      MIN_GROUP: '4'
+      DEAL_THRESHOLD: '0.15'
+      FEE_EUR: '15'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Playwright + Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Scan 999.md
+        run: python scripts/iphone-arb/scan.py
