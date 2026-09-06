@@ -19,6 +19,10 @@ MIN_BATTERY    = int(os.environ.get("MIN_BATTERY", "80"))   # sub asta = flag ba
 PRICE_MIN_EUR  = float(os.environ.get("PRICE_MIN_EUR", "40"))
 PRICE_MAX_EUR  = float(os.environ.get("PRICE_MAX_EUR", "2500"))
 MAX_ENRICH     = int(os.environ.get("MAX_ENRICH", "45"))    # cate pagini de detaliu deschidem
+MIN_PROFIT     = float(os.environ.get("MIN_PROFIT", "50"))  # profit NET minim ca sa trimita
+PEN_ECRAN      = float(os.environ.get("PEN_ECRAN", "40"))   # penalizare ecran schimbat (aftermarket)
+PEN_BAT_LOW    = float(os.environ.get("PEN_BAT_LOW", "35")) # baterie < MIN_BATTERY
+PEN_BAT_VLOW   = float(os.environ.get("PEN_BAT_VLOW", "55")) # baterie < 75%
 RATE = {"MDL": 1/19.5, "LEI": 1/19.5, "€": 1.0, "EUR": 1.0, "$": 0.92, "USD": 0.92}
 
 CANDIDATES = [
@@ -277,10 +281,26 @@ def run():
 
         b.close()
 
-    # filtru final dupa descriere: afara faceid/touchid/icloud/defect/magazin
-    KILL = {"faceid_defect", "touchid_defect", "icloud", "defect"}  # magazin = doar avertisment
-    deals = [a for a in candidates if a.get("enriched")
-             and not (set(a.get("flags", [])) & KILL)]
+    # filtru final:
+    #  MAJOR (faceid/touchid mort, iCloud, spart) -> AFARA (nu-s "minore").
+    #  MINOR (ecran schimbat, baterie slaba) -> PENALIZARE din profit;
+    #  ramane doar daca profitul NET >= MIN_PROFIT.
+    KILL_MAJOR = {"faceid_defect", "touchid_defect", "icloud", "defect"}
+    deals = []
+    for a in candidates:
+        if not a.get("enriched") or (set(a.get("flags", [])) & KILL_MAJOR):
+            continue
+        pen = 0.0
+        if "ecran_schimbat" in a.get("flags", []):
+            pen += PEN_ECRAN
+        bat = a.get("battery")
+        if bat is not None and bat < MIN_BATTERY:
+            pen += PEN_BAT_VLOW if bat < 75 else PEN_BAT_LOW
+        a["penalty_eur"] = round(pen, 1)
+        a["net_profit_eur"] = round(a["est_profit_eur"] - pen, 1)
+        if a["net_profit_eur"] >= MIN_PROFIT:
+            deals.append(a)
+    deals.sort(key=lambda x: x["net_profit_eur"], reverse=True)
     return deals, len(all_ads), len(valid)
 
 
@@ -316,15 +336,16 @@ def tg_send(token, chat, text):
 
 
 def fmt_tg(d):
-    mdl = round(d["price_eur"] * 19.5 / 100) * 100
+    mdl = f'{round(d["price_eur"] * 19.5 / 100) * 100:,}'.replace(",", ".")
     bat = f'🔋 {d["battery"]}%' if d.get("battery") else '🔋 ?'
-    warn = ""
-    softs = [f for f in d.get("flags", []) if f]
-    if softs:
-        warn = "\n⚠️ " + ", ".join(softs)
-    return (f'🟢 {d["grp"].replace("|", " ")} — €{d["price_eur"]:.0f} (~{mdl:,} lei)\n'
-            f'{bat} | marjă +€{d["est_profit_eur"]:.0f} vs piață €{d["group_median"]:.0f} '
-            f'({d["deal_score"]*100:.0f}%){warn}\n{d["url"]}').replace(",", ".")
+    minor = [f for f in d.get("flags", []) if f]
+    pen = d.get("penalty_eur", 0)
+    emoji = "🟡" if pen else "🟢"
+    pen_note = f" (după −€{pen:.0f} problemă)" if pen else ""
+    warn = ("\n⚠️ " + ", ".join(minor)) if minor else ""
+    return (f'{emoji} {d["grp"].replace("|", " ")} — €{d["price_eur"]:.0f} (~{mdl} lei)\n'
+            f'{bat} | profit net +€{d["net_profit_eur"]:.0f}{pen_note} · piață €{d["group_median"]:.0f}'
+            f'{warn}\n{d["url"]}')
 
 
 def main():
@@ -335,9 +356,9 @@ def main():
     for d in deals[:30]:
         bat = f'{d["battery"]}%bat' if d.get("battery") else 'bat?'
         fl = (",".join(d.get("flags", [])) or "ok")
-        print(f'€{d["price_eur"]:>5.0f} | med €{d["group_median"]:>4.0f} | '
-              f'+€{d["est_profit_eur"]:>4.0f} ({d["deal_score"]*100:>4.1f}%) | {bat:>7} | '
-              f'{d["grp"]:<22} | {d["title"][:40]} | {fl} | {d["url"]}')
+        print(f'€{d["price_eur"]:>5.0f} | NET +€{d["net_profit_eur"]:>4.0f} | brut +€{d["est_profit_eur"]:>4.0f} | '
+              f'pen €{d.get("penalty_eur",0):>3.0f} | med €{d["group_median"]:>4.0f} | {bat:>7} | '
+              f'{d["grp"]:<22} | {d["title"][:36]} | {fl} | {d["url"]}')
     print("\n<<<DEALS_JSON>>>")
     print(json.dumps(deals[:30], ensure_ascii=False))
     print("<<<END_DEALS_JSON>>>")
