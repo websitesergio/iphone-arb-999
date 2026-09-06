@@ -41,13 +41,15 @@ STORAGE_RE = re.compile(r"\b(1\s?tb|512|256|128|64)\s*(gb|tb|гб)", re.I)
 PRICE_RE = re.compile(r"(\d[\d  .]{0,8}\d|\d)\s*(mdl|lei|€|eur|\$|usd)", re.I)
 
 # --- detectie in DESCRIERE (RO/RU/EN) ---
-FACEID = re.compile(r"face\s?id|фейс\s?айди|фейсид", re.I)
-TOUCHID = re.compile(r"touch\s?id|тач\s?айди|отпечаток|amprent", re.I)
+FACEID = re.compile(r"face\s?id|фейс[\s-]?айди|фейсид|\bфейс\b|\bфэйс\b", re.I)
+TOUCHID = re.compile(r"touch\s?id|тач[\s-]?айди|\bтач\b|отпечаток|amprent", re.I)
 # defect langa feature (specific, ca sa nu dea fals pozitiv pe "nu are probleme")
+# include "krome/in afara de/except" = "totul merge EXCEPT <feature>"
 BROKEN = re.compile(
     r"(nu\s?(merge|funcț|funct|lucreaz|porne|se\s?deschide)|defect|stricat|mort|"
     r"nu\s?e\s?activ|не\s?работает|не\s?раб\b|неисправ|не\s?включ|проблем\w*\s?с|"
-    r"not\s?work|doesn.?t\s?work|broken|dead|faulty|issue)", re.I)
+    r"кроме|cu\s?excep[țt]|[îi]n\s?afar[ăa]\s?de|except|apart\s?from|"
+    r"not\s?work|doesn.?t\s?work|broken|dead|faulty|issue|неисправен)", re.I)
 ABSENT = re.compile(r"(нет|без|no\b|f[ăa]r[ăa]|lipsă|lipse)\s*(face\s?id|touch\s?id|фейс|тач)", re.I)
 ICLOUD = re.compile(
     r"(icloud|активац|аккаунт\s?apple|cont\s?apple).{0,25}(blocat|заблок|lock|привяз|активн)|"
@@ -168,6 +170,9 @@ def enrich(page, ad):
         ad["flags"].append("icloud")
     if re.search(r"spart|cr[ăa]pat|разбит|треснут|pe\s?piese|на\s?запчаст", low):
         ad["flags"].append("defect")
+    if re.search(r"ecran\s?schimbat|display\s?schimbat|дисплей\s?замен|экран\s?замен|"
+                 r"screen\s?replaced|копия\s?экран|неоригинал", low):
+        ad["flags"].append("ecran_schimbat")   # avertisment: scade valoarea
     if COMPANY.search(low) or SHOP_DESC.search(low):
         ad["flags"].append("magazin")   # doar avertisment, nu elimina
     bat = find_battery(low)
