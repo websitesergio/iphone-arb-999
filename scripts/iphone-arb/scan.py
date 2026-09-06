@@ -8,7 +8,7 @@ Pas 3: ENRICHMENT - pe fiecare candidat de deal intra pe pagina lui si
        citeste DESCRIEREA (RO/RU/EN): Face ID / Touch ID mort, iCloud blocat,
        baterie %, magazin vs persoana fizica. Ce-i defect -> afara.
 """
-import os, re, json, statistics, sys
+import os, re, json, statistics, sys, urllib.request, urllib.parse
 from playwright.sync_api import sync_playwright
 
 PAGES          = int(os.environ.get("PAGES", "8"))
@@ -284,6 +284,49 @@ def run():
     return deals, len(all_ads), len(valid)
 
 
+SEEN_FILE = os.environ.get("SEEN_FILE", "state/seen.json")
+
+
+def load_seen():
+    try:
+        with open(SEEN_FILE, encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+
+def save_seen(ids):
+    try:
+        os.makedirs(os.path.dirname(SEEN_FILE), exist_ok=True)
+        with open(SEEN_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(ids)[-800:], f)   # pastram ultimele 800
+    except Exception as e:
+        print(f"[state] save fail: {e}", file=sys.stderr)
+
+
+def tg_send(token, chat, text):
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=20)
+        return True
+    except Exception as e:
+        print(f"[tg] fail: {e}", file=sys.stderr)
+        return False
+
+
+def fmt_tg(d):
+    mdl = round(d["price_eur"] * 19.5 / 100) * 100
+    bat = f'🔋 {d["battery"]}%' if d.get("battery") else '🔋 ?'
+    warn = ""
+    softs = [f for f in d.get("flags", []) if f]
+    if softs:
+        warn = "\n⚠️ " + ", ".join(softs)
+    return (f'🟢 {d["grp"].replace("|", " ")} — €{d["price_eur"]:.0f} (~{mdl:,} lei)\n'
+            f'{bat} | marjă +€{d["est_profit_eur"]:.0f} vs piață €{d["group_median"]:.0f} '
+            f'({d["deal_score"]*100:.0f}%){warn}\n{d["url"]}').replace(",", ".")
+
+
 def main():
     deals, n_ads, n_valid = run()
     print("\n" + "=" * 74)
@@ -298,6 +341,22 @@ def main():
     print("\n<<<DEALS_JSON>>>")
     print(json.dumps(deals[:30], ensure_ascii=False))
     print("<<<END_DEALS_JSON>>>")
+
+    # --- Telegram: doar deal-uri NOI (dedup via state/seen.json) ---
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    force = os.environ.get("FORCE_ALL") == "1"
+    seen = load_seen()
+    new = deals if force else [d for d in deals if d["advert_id"] not in seen]
+    if token and chat:
+        sent = 0
+        for d in new[:15]:
+            if tg_send(token, chat, fmt_tg(d)):
+                sent += 1
+        print(f"[tg] trimis {sent}/{len(new)} deal-uri noi (force={force})", file=sys.stderr)
+    else:
+        print("[tg] fara credentiale (seteaza secrets TELEGRAM_BOT_TOKEN/CHAT_ID)", file=sys.stderr)
+    save_seen(seen | {d["advert_id"] for d in deals})
 
 
 if __name__ == "__main__":

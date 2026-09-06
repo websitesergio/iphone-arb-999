@@ -7,21 +7,30 @@ on:
       - 'scripts/iphone-arb/**'
       - '.github/workflows/iphone-arb.yml'
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Trimite pe Telegram toate deal-urile curente (test), ignora dedup"
+        type: boolean
+        default: false
   schedule:
-    - cron: '0 */6 * * *'   # la fiecare 6h (ruleaza de pe branch-ul default: main)
+    - cron: '0 */6 * * *'   # la 6h (branch default: main)
 
 permissions:
-  contents: read
+  contents: write   # ca sa salvam state/seen.json (dedup Telegram)
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       PAGES: '8'
       MIN_GROUP: '4'
       DEAL_THRESHOLD: '0.15'
       FEE_EUR: '15'
+      MIN_BATTERY: '80'
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      FORCE_ALL: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,5 +41,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install playwright
           python -m playwright install --with-deps chromium
-      - name: Scan 999.md
+      - name: Scan 999.md + alert Telegram
         run: python scripts/iphone-arb/scan.py
+      - name: Persist seen state (dedup)
+        run: |
+          if [ -n "$(git status --porcelain state/)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add state/seen.json
+            git commit -m "chore: update seen deals state"
+            git push origin HEAD:main
+          else
+            echo "no state change"
+          fi
