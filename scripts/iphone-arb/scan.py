@@ -179,6 +179,18 @@ def enrich(page, ad):
         ad["flags"].append("ecran_schimbat")   # avertisment: scade valoarea
     if COMPANY.search(low) or SHOP_DESC.search(low):
         ad["flags"].append("magazin")   # doar avertisment, nu elimina
+    # scam / bot / lead-harvest: cer numarul TAU, te suna ei, privat/WhatsApp, avans
+    scam = bool(re.search(
+        r"(las[ăa]?[\s-]*(mi|ne)?[\s-]*(num[ăa]r|nr)|num[ăa]r(ul)?\s+(t[ăa]u|vostru|dvs|dumneavoastr)|"
+        r"оставь\w*\s+(свой\s+)?(номер|тел)|скинь\w*\s+номер|ваш\s+номер|"
+        r"v[ăa]\s?sun\b|te\s?sun\s?eu|\bsun\s?eu\b|перезвон|я\s?перезвоню|"
+        r"пишите\s+(в\s+)?(лс|личк|ватсап|whats?app|вайбер|viber|телеграм|telegram)|"
+        r"scrie[țt]i?\s+(doar\s+)?(în|in)\s+(privat|pm|mesaj))", low))
+    if re.search(r"\b(avans|arvun|предоплат\w*|аванс)\b", low) and not \
+       re.search(r"(f[ăa]r[ăa]|fara|без)\s+\w{0,6}\s?(avans|предоплат|аванс|arvun)", low):
+        scam = True
+    if scam:
+        ad["flags"].append("scam?")
     bat = find_battery(low)
     ad["battery"] = bat
     if bat is not None and bat < MIN_BATTERY:
@@ -285,7 +297,7 @@ def run():
     #  MAJOR (faceid/touchid mort, iCloud, spart) -> AFARA (nu-s "minore").
     #  MINOR (ecran schimbat, baterie slaba) -> PENALIZARE din profit;
     #  ramane doar daca profitul NET >= MIN_PROFIT.
-    KILL_MAJOR = {"faceid_defect", "touchid_defect", "icloud", "defect"}
+    KILL_MAJOR = {"faceid_defect", "touchid_defect", "icloud", "defect", "scam?"}
     deals = []
     for a in candidates:
         if not a.get("enriched") or (set(a.get("flags", [])) & KILL_MAJOR):
