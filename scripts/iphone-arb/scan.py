@@ -19,6 +19,7 @@ MIN_BATTERY    = int(os.environ.get("MIN_BATTERY", "80"))   # sub asta = flag ba
 PRICE_MIN_EUR  = float(os.environ.get("PRICE_MIN_EUR", "40"))
 PRICE_MAX_EUR  = float(os.environ.get("PRICE_MAX_EUR", "2500"))
 MAX_ENRICH     = int(os.environ.get("MAX_ENRICH", "45"))    # cate pagini de detaliu deschidem
+MAX_ALIVE_CHECK = int(os.environ.get("MAX_ALIVE_CHECK", "80"))  # cate anunturi trimise verificam ca mai exista
 MIN_PROFIT     = float(os.environ.get("MIN_PROFIT", "50"))  # profit NET minim ca sa trimita
 PEN_ECRAN      = float(os.environ.get("PEN_ECRAN", "40"))   # penalizare ecran schimbat (aftermarket)
 PEN_BAT_LOW    = float(os.environ.get("PEN_BAT_LOW", "35")) # baterie < MIN_BATTERY
@@ -287,6 +288,18 @@ def run():
                   f"scope={a.get('scope')} bat={a.get('battery')} flags={a.get('flags')} "
                   f":: {a.get('snippet','')[:130]}", file=sys.stderr)
 
+        # verific ce anunturi TRIMISE anterior au fost STERSE de pe 999 (autorul le-a scos)
+        prev_sent = load_sent()
+        deleted_ids = []
+        checked = 0
+        for aid in list(prev_sent.keys()):
+            if checked >= MAX_ALIVE_CHECK:
+                break
+            checked += 1
+            if check_alive(page, f"https://999.md/ro/{aid}") == "deleted":
+                deleted_ids.append(aid)
+        print(f"[alive] verificat {checked} trimise | sterse pe 999: {len(deleted_ids)}", file=sys.stderr)
+
         b.close()
 
     # filtru final:
@@ -309,38 +322,85 @@ def run():
         if a["net_profit_eur"] >= MIN_PROFIT:
             deals.append(a)
     deals.sort(key=lambda x: x["net_profit_eur"], reverse=True)
-    return deals, len(all_ads), len(valid)
+    return deals, deleted_ids, len(all_ads), len(valid)
 
 
-SEEN_FILE = os.environ.get("SEEN_FILE", "state/seen.json")
+SENT_FILE = os.environ.get("SENT_FILE", "state/sent.json")
+SEEN_FILE = os.environ.get("SEEN_FILE", "state/seen.json")   # vechi, doar pt migrare
 
 
-def load_seen():
+def load_sent():
+    """{advert_id: {message_id, sig}} - anunturile aflate ACUM in chat."""
     try:
-        with open(SEEN_FILE, encoding="utf-8") as f:
-            return set(json.load(f))
+        with open(SENT_FILE, encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        return set()
+        pass
+    try:  # migrare din vechiul seen.json (fara message_id => nu se pot sterge, dar nu se re-trimit)
+        with open(SEEN_FILE, encoding="utf-8") as f:
+            return {i: {"message_id": None, "sig": None} for i in json.load(f)}
+    except Exception:
+        return {}
 
 
-def save_seen(ids):
+def save_sent(d):
     try:
-        os.makedirs(os.path.dirname(SEEN_FILE), exist_ok=True)
-        with open(SEEN_FILE, "w", encoding="utf-8") as f:
-            json.dump(sorted(ids)[-800:], f)   # pastram ultimele 800
+        if len(d) > 600:
+            d = dict(list(d.items())[-600:])
+        os.makedirs(os.path.dirname(SENT_FILE), exist_ok=True)
+        with open(SENT_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
     except Exception as e:
         print(f"[state] save fail: {e}", file=sys.stderr)
+
+
+def check_alive(page, url):
+    """'deleted' daca anuntul a fost scos de pe 999, 'alive' daca exista, 'unknown' la eroare."""
+    try:
+        resp = page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    except Exception:
+        return "unknown"
+    try:
+        if resp is not None and resp.status == 404:
+            return "deleted"
+    except Exception:
+        pass
+    try:
+        page.wait_for_timeout(500)
+        txt = " ".join(page.inner_text("body")[:2000].split()).lower()
+    except Exception:
+        return "unknown"
+    if re.search(r"nu a fost g[ăa]sit|pagina nu (a fost )?(g[ăa]sit|exist)|"
+                 r"anun[țt]ul (a fost )?(șters|sters|expirat|retras)|"
+                 r"не найден|объявление (удал|снят|не найд)|удалено|снято|страница не найдена", txt):
+        return "deleted"
+    return "alive"
 
 
 def tg_send(token, chat, text):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
     try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=20) as r:
+            return json.load(r).get("result", {}).get("message_id")
+    except Exception as e:
+        print(f"[tg] fail: {e}", file=sys.stderr)
+        return None
+
+
+def tg_delete(token, chat, message_id):
+    url = f"https://api.telegram.org/bot{token}/deleteMessage"
+    data = urllib.parse.urlencode({"chat_id": chat, "message_id": message_id}).encode()
+    try:
         urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=20)
         return True
     except Exception as e:
-        print(f"[tg] fail: {e}", file=sys.stderr)
+        print(f"[tg] delete fail {message_id}: {e}", file=sys.stderr)
         return False
+
+
+def sig(d):  # semnatura de continut: acelasi telefon repostat cu alt id
+    return f'sig:{d.get("model")}|{d.get("storage")}|{round(d["price_eur"])}|{d.get("battery")}'
 
 
 def fmt_tg(d):
@@ -357,9 +417,10 @@ def fmt_tg(d):
 
 
 def main():
-    deals, n_ads, n_valid = run()
+    deals, deleted_ids, n_ads, n_valid = run()
     print("\n" + "=" * 74)
-    print(f"REZUMAT: {n_ads} anunturi | {n_valid} evaluabile | {len(deals)} DEAL-URI CURATE (dupa descriere)")
+    print(f"REZUMAT: {n_ads} anunturi | {n_valid} evaluabile | {len(deals)} DEAL-URI | "
+          f"{len(deleted_ids)} sterse pe 999")
     print("=" * 74)
     for d in deals[:30]:
         bat = f'{d["battery"]}%bat' if d.get("battery") else 'bat?'
@@ -371,28 +432,35 @@ def main():
     print(json.dumps(deals[:30], ensure_ascii=False))
     print("<<<END_DEALS_JSON>>>")
 
-    # --- Telegram: doar deal-uri NOI (dedup via state/seen.json) ---
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID")
     force = os.environ.get("FORCE_ALL") == "1"
-    def sig(d):  # semnatura de continut: acelasi telefon repostat cu alt id
-        return f'sig:{d.get("model")}|{d.get("storage")}|{round(d["price_eur"])}|{d.get("battery")}'
-    seen = load_seen()
+    sent = load_sent()
+
+    # 1) STERGE din chat anunturile scoase de pe 999
+    removed = 0
+    for aid in deleted_ids:
+        meta = sent.pop(aid, None)
+        if token and chat and meta and meta.get("message_id"):
+            if tg_delete(token, chat, meta["message_id"]):
+                removed += 1
+
+    # 2) TRIMITE doar deal-uri noi (dedup pe id + semnatura de continut)
+    existing_sigs = {m.get("sig") for m in sent.values() if m.get("sig")}
     new = deals if force else [d for d in deals
-                               if d["advert_id"] not in seen and sig(d) not in seen]
+                               if d["advert_id"] not in sent and sig(d) not in existing_sigs]
+    sent_now = 0
     if token and chat:
-        sent = 0
         for d in new[:15]:
-            if tg_send(token, chat, fmt_tg(d)):
-                sent += 1
-        print(f"[tg] trimis {sent}/{len(new)} deal-uri noi (force={force})", file=sys.stderr)
+            mid = tg_send(token, chat, fmt_tg(d))
+            if mid:
+                sent[d["advert_id"]] = {"message_id": mid, "sig": sig(d)}
+                sent_now += 1
+        print(f"[tg] trimis {sent_now} noi | sters {removed}/{len(deleted_ids)} | "
+              f"acum in chat {len(sent)} (force={force})", file=sys.stderr)
     else:
         print("[tg] fara credentiale (seteaza secrets TELEGRAM_BOT_TOKEN/CHAT_ID)", file=sys.stderr)
-    tokens = set()
-    for d in deals:
-        tokens.add(d["advert_id"])
-        tokens.add(sig(d))
-    save_seen(seen | tokens)
+    save_sent(sent)
 
 
 if __name__ == "__main__":
