@@ -121,30 +121,55 @@ JS_LIST = r"""
 """
 
 
+# selectoare posibile pentru blocul descrierii (folosim primul cu text)
+DESC_SEL = ("[itemprop='description']", ".adPage__content__description",
+            ".adPage__content__description__text", "div.js-description",
+            "[class*='description']", "[class*='Description']")
+
+
+def get_desc(page):
+    for sel in DESC_SEL:
+        try:
+            el = page.query_selector(sel)
+            if el:
+                t = (el.inner_text() or "").strip()
+                if len(t) > 15:
+                    return t, sel
+        except Exception:
+            pass
+    try:
+        return page.inner_text("body"), "body"
+    except Exception:
+        return "", "none"
+
+
 def enrich(page, ad):
-    """Deschide pagina anuntului, citeste descrierea, seteaza flag-urile."""
+    """Deschide pagina anuntului, citeste DOAR descrierea, seteaza flag-urile."""
     ad["enriched"] = False
     ad["flags"] = []
     ad["battery"] = None
+    ad["scope"] = None
     try:
         page.goto(ad["url"], wait_until="domcontentloaded", timeout=40000)
-        page.wait_for_timeout(1400)
-        text = page.inner_text("body")
-    except Exception as e:
-        ad["flags"].append(f"enrich_fail")
+        page.wait_for_timeout(1300)
+        desc, scope = get_desc(page)
+    except Exception:
+        ad["flags"].append("enrich_fail")
         return
     ad["enriched"] = True
-    low = " ".join(text.split()).lower()
-    if issue_near(low, FACEID) or ABSENT.search(low) and re.search(r"face\s?id|фейс", low):
+    ad["scope"] = scope
+    low = " ".join(((ad.get("title") or "") + " " + desc).split()).lower()
+    ad["snippet"] = low[:200]
+    if issue_near(low, FACEID) or (ABSENT.search(low) and re.search(r"face\s?id|фейс", low)):
         ad["flags"].append("faceid_defect")
     if issue_near(low, TOUCHID):
         ad["flags"].append("touchid_defect")
     if ICLOUD.search(low):
         ad["flags"].append("icloud")
-    if COMPANY.search(low) or SHOP_DESC.search(low):
-        ad["flags"].append("magazin")
-    if re.search(r"spart|cr[ăa]pat|разбит|треснут|defect|дефект|pe\s?piese|на\s?запчаст", low):
+    if re.search(r"spart|cr[ăa]pat|разбит|треснут|pe\s?piese|на\s?запчаст", low):
         ad["flags"].append("defect")
+    if COMPANY.search(low) or SHOP_DESC.search(low):
+        ad["flags"].append("magazin")   # doar avertisment, nu elimina
     bat = find_battery(low)
     ad["battery"] = bat
     if bat is not None and bat < MIN_BATTERY:
@@ -241,11 +266,14 @@ def run():
         print(f"[enrich] {min(len(candidates), MAX_ENRICH)} candidati -> citesc descrierile...", file=sys.stderr)
         for a in candidates[:MAX_ENRICH]:
             enrich(page, a)
+            print(f"[cand] {a['advert_id']} {a['grp']} €{a['price_eur']:.0f} "
+                  f"scope={a.get('scope')} bat={a.get('battery')} flags={a.get('flags')} "
+                  f":: {a.get('snippet','')[:130]}", file=sys.stderr)
 
         b.close()
 
     # filtru final dupa descriere: afara faceid/touchid/icloud/defect/magazin
-    KILL = {"faceid_defect", "touchid_defect", "icloud", "defect", "magazin"}
+    KILL = {"faceid_defect", "touchid_defect", "icloud", "defect"}  # magazin = doar avertisment
     deals = [a for a in candidates if a.get("enriched")
              and not (set(a.get("flags", [])) & KILL)]
     return deals, len(all_ads), len(valid)
