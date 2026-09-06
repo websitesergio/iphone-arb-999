@@ -17,12 +17,10 @@ DEAL_THRESHOLD = float(os.environ.get("DEAL_THRESHOLD", "0.15"))
 FEE_EUR        = float(os.environ.get("FEE_EUR", "15"))
 FX = {"€": 1.0, "EUR": 1.0, "LEI": 1/19.5, "MDL": 1/19.5, "$": 0.92, "USD": 0.92}
 
-# URL-uri candidate (structura 999 se schimba; folosim primul care da anunturi)
+# URL-uri candidate (confirmate cu sonda). Categoria telefoane filtrata pe iphone.
 CANDIDATES = [
+    "https://999.md/ro/list/phone-and-communication/mobile-phones?query=iphone",
     "https://999.md/ro/search?query=iphone",
-    "https://999.md/ro/list/electronics/mobile-phones",
-    "https://999.md/ro/list/electronics-and-appliances/mobile-phones",
-    "https://999.md/ro/list/electronics/phones",
 ]
 
 BAD = re.compile(r"(spart|crapat|cr[aă]p|defect|nefunc|pe piese|icloud|blocat|"
@@ -93,7 +91,11 @@ def scan():
         for cand in CANDIDATES:
             try:
                 page.goto(cand, wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(2500)
+                try:
+                    page.wait_for_selector('a[href^="/ro/"]', timeout=20000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(2000)
                 items = page.evaluate(JS_EXTRACT)
             except Exception as e:
                 print(f"[skip] {cand}: {e}", file=sys.stderr)
@@ -115,7 +117,11 @@ def scan():
             try:
                 if pg > 1:
                     page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                    page.wait_for_timeout(2000)
+                    try:
+                        page.wait_for_selector('a[href^="/ro/"]', timeout=20000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(1500)
                 items = page.evaluate(JS_EXTRACT)
             except Exception as e:
                 print(f"[skip pag {pg}] {e}", file=sys.stderr)
