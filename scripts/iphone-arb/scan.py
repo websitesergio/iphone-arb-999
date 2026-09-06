@@ -375,8 +375,11 @@ def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID")
     force = os.environ.get("FORCE_ALL") == "1"
+    def sig(d):  # semnatura de continut: acelasi telefon repostat cu alt id
+        return f'sig:{d.get("model")}|{d.get("storage")}|{round(d["price_eur"])}|{d.get("battery")}'
     seen = load_seen()
-    new = deals if force else [d for d in deals if d["advert_id"] not in seen]
+    new = deals if force else [d for d in deals
+                               if d["advert_id"] not in seen and sig(d) not in seen]
     if token and chat:
         sent = 0
         for d in new[:15]:
@@ -385,7 +388,11 @@ def main():
         print(f"[tg] trimis {sent}/{len(new)} deal-uri noi (force={force})", file=sys.stderr)
     else:
         print("[tg] fara credentiale (seteaza secrets TELEGRAM_BOT_TOKEN/CHAT_ID)", file=sys.stderr)
-    save_seen(seen | {d["advert_id"] for d in deals})
+    tokens = set()
+    for d in deals:
+        tokens.add(d["advert_id"])
+        tokens.add(sig(d))
+    save_seen(seen | tokens)
 
 
 if __name__ == "__main__":
