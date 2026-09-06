@@ -23,12 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      PAGES: '8'
+      PAGES: '20'
       MIN_GROUP: '4'
       DEAL_THRESHOLD: '0.15'
       FEE_EUR: '15'
       MIN_BATTERY: '80'
       MIN_PROFIT: '50'      # profit net minim (EUR) ca sa-ti trimita pe Telegram
+      MAX_ENRICH: '80'      # cati candidati verificam in descriere
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       FORCE_ALL: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) && '1' || '0' }}
