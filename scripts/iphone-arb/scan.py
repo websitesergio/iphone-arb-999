@@ -65,7 +65,9 @@ BAT_NEAR = re.compile(
 BAT_ANY = re.compile(r"\b(\d{2,3})\s?%")
 SHOP_DESC = re.compile(
     r"(în\s?rate|in\s?rate|credit|кредит|в\s?рассрочку|рассрочк|гаранți|гарантия\s?магаз|"
-    r"program\s?de\s?lucru|график\s?работы|adresa\s?magazin|наш\s?магазин|showroom)", re.I)
+    r"program\s?de\s?lucru|график\s?работы|adresa\s?magazin|наш\s?магазин|showroom|"
+    r"www\.|https?://|заходи\s?на\s?сайт|по\s?ссылке|наш\s?сайт|pe\s?site|gsmshop|"
+    r"reducere|скидк|акци[яи]|доставка\s?по\s?молдове)", re.I)
 
 
 def parse_price(raw):
@@ -306,7 +308,7 @@ def run():
     #  MAJOR (faceid/touchid mort, iCloud, spart) -> AFARA (nu-s "minore").
     #  MINOR (ecran schimbat, baterie slaba) -> PENALIZARE din profit;
     #  ramane doar daca profitul NET >= MIN_PROFIT.
-    KILL_MAJOR = {"faceid_defect", "touchid_defect", "icloud", "defect", "revanzator?"}
+    KILL_MAJOR = {"faceid_defect", "touchid_defect", "icloud", "defect", "revanzator?", "magazin"}
     deals = []
     for a in candidates:
         if not a.get("enriched") or (set(a.get("flags", [])) & KILL_MAJOR):
